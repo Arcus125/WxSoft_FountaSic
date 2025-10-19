@@ -37,7 +37,7 @@
         <text class="add-time">{{item.add_time || '未知时间'}}</text>
       </view>
       <view class="action-buttons">
-        <view class="remove-btn" catchtap="onRemoveFavorite" data-music="{{item}}">
+        <view class="remove-btn" catchtap="removeFavorite" data-music="{{item}}">
           <text>取消收藏</text>
         </view>
       </view>

@@ -7,21 +7,15 @@ from datetime import datetime                               # 获取当前时间
 import os                                                   # 文件系统操作（判断文件存在等）
 from flask_cors import CORS                                 # 跨域请求支持
 
-# ===================== 初始化 Flask 应用 ===================== #
 app = Flask(__name__, static_folder='image', static_url_path='/image')# 创建Flask应用对象
 CORS(app)  # 启用跨域支持，方便前后端分离开发
 
-# 允许 HTTPS 免费隧道测试时跳过 SSL 警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# ===================== 配置信息 ===================== #
 WECHAT_APPID = "wxc3531de3f8cb9b73"      # 微信小程序的AppID
 WECHAT_SECRET = "49f90fdedeff9a7c0d1fca8b7bcf277e"  # 微信小程序的AppSecret
 DB_PATH = "users.db"                     # SQLite数据库文件路径（项目根目录下）
 
-# ===================== 初始化数据库 ===================== #
-
-# 手动增加静态文件路由，确保 /image/* 能正常访问
 @app.route('/image/<path:filename>')
 def serve_image(filename):
     """返回 image 文件夹下的静态资源"""
@@ -34,10 +28,11 @@ def init_db():
     # 创建 users 表（存储openid、昵称、头像、时间等）
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,  -- 自增主键
-            openid TEXT UNIQUE,                    -- 微信唯一标识
-            nickname TEXT,                         -- 用户昵称
-            avatar_url TEXT,                       -- 用户头像URL
+            id INTEGER PRIMARY KEY AUTOINCREMENT,  -- 用户序号
+            openid TEXT UNIQUE,                    -- 用户在微信唯一标识
+            nickname TEXT,                         -- 昵称
+            avatar_url TEXT,                       -- 头像URL(暂时不可用)
+            
             create_time TEXT,                      -- 注册时间
             login_time TEXT                        -- 最近登录时间
         )
@@ -94,39 +89,10 @@ def api_login():
     """处理微信小程序的登录与注册逻辑"""
     data = request.get_json()  # 从前端POST请求中获取JSON数据
     code = data.get("code")  # 微信登录凭证code
-    register = data.get("register", 0)  # 操作类型：0=自检，1=注册
-    nickname = data.get("nickname", "")  # 用户昵称（注册时传）
-    avatar_url = data.get("avatarUrl", "")  # 用户头像URL（注册时传）
-
-    print(f"(>ω<) 收到来自客户端的登录请求: {data}")
-
-    # ========== 如果前端传了openid，则尝试本地快速登录 ==========
-    openid_from_client = data.get("openid")
-    if openid_from_client:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, nickname, avatar_url FROM users WHERE openid=?", (openid_from_client,))
-        user = cursor.fetchone()
-        conn.close()
-        if user:
-            print(f"(๑¯◡¯๑) 直接使用缓存openid快速登录: {openid_from_client}")
-            return jsonify({
-                "status": "success",
-                "existUser": 1,
-                "openid": openid_from_client,
-                "nickname": user[1],
-                "avatar_url": user[2]
-            })
-
-    # ========== 若没有code参数，返回错误 ==========
-    if not code:
-        return jsonify({"status": "fail", "msg": "缺少code参数"}), 400
-
-    # ========== 调用微信API换openid ==========
     wx_data = get_openid_from_wechat(code)
+    openid = wx_data.get("openid")  # 提取openid
     print("(￣▽￣) 微信返回:", wx_data)
 
-    openid = wx_data.get("openid")  # 提取openid
     if not openid:
         return jsonify({"status": "fail", "msg": "微信返回无openid"}), 400
 
@@ -135,87 +101,76 @@ def api_login():
     cursor = conn.cursor()
     cursor.execute("SELECT id, nickname, avatar_url FROM users WHERE openid=?", (openid,))
     user = cursor.fetchone()
-
-    # ---------- 自检模式（仅检查是否存在） ----------
-    if register == 0:
-        exist = 1 if user else 0
-        conn.close()
-        print(f"(ง •_•)ง 用户存在状态: {exist}, openid: {openid}")
-        return jsonify({
-            "status": "success",
-            "existUser": exist,
-            "openid": openid
-        })
-
-    # ---------- 注册或更新模式 ----------
-    elif register == 1:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # 当前时间
-        if user:
-            # 已注册 → 更新信息
-            cursor.execute(
-                "UPDATE users SET nickname=?, avatar_url=?, login_time=? WHERE openid=?",
-                (nickname, avatar_url, now, openid)
-            )
-            print(f"(•̀ᴗ•́)و 更新用户信息: {openid}")
-        else:
-            # 新用户 → 插入记录
-            cursor.execute(
-                "INSERT INTO users (openid, nickname, avatar_url, create_time, login_time) VALUES (?, ?, ?, ?, ?)",
-                (openid, nickname, avatar_url, now, now)
-            )
-            print(f"(≧▽≦)/ 新用户注册成功: {openid}")
-
-        conn.commit()  # 提交更改
-        conn.close()
-
-        return jsonify({
-            "status": "success",
-            "existUser": 1,
-            "openid": openid,
-            "nickname": nickname,
-            "avatar_url": avatar_url
-        })
-
-# ===================== 查询单个用户 ===================== #
-@app.route('/api/user/<openid>', methods=['GET'])
-def get_user_by_openid(openid):
-    """根据openid查询单个用户信息"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, openid, nickname, avatar_url, create_time, login_time FROM users WHERE openid=?", (openid,))
-    user = cursor.fetchone()
-    conn.close()
-
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # 当前时间
     if user:
-        # 找到用户则返回简要信息
+        # 已注册 → 更新信息
+        cursor.execute(
+            "UPDATE users SET login_time=? WHERE openid=?", (now, openid)
+        )
+        conn.commit
+        conn.close
         return jsonify({
-            "status": "found",
-            "existUser": 1,
-            "openid": user[1],
-            "nickname": user[2],
-            "avatar_url": user[3]
+            "status": "success",
+            "openid": openid,
+            "nickname": user[1],
+            "avatar_url": user[2]
         })
     else:
-        # 否则返回未找到
         return jsonify({
-            "status": "not_found",
-            "existUser": 0
+            "status": "fail",
         })
+@app.route('/api/register', methods=['POST'])
+def api_register():
+    data = request.get_json()
+    code = data.get("code")
+    nickname = data.get("nickname", "用户")
+    avatar_url = data.get("avatarUrl", "")
+    wx_data = get_openid_from_wechat(code)
+    openid = wx_data.get("openid")
+    if not openid:
+        return jsonify({"status": "fail", "msg": "微信返回无openid"}), 400
 
-# ===================== 删除指定ID的用户 ===================== #
-@app.route('/api/delete_user/<int:user_id>', methods=['DELETE'])
-def delete_user(user_id):
-    """根据用户id删除用户"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM users WHERE id=?", (user_id,))
+    cursor.execute("SELECT id FROM users WHERE openid=?", (openid,))
+    user = cursor.fetchone()
+    if user:  # 已存在
+        conn.close()
+        return jsonify({"status": "fail", "msg": "用户已注册"}), 400
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        "INSERT INTO users (openid, nickname, avatar_url, create_time, login_time) VALUES (?, ?, ?, ?, ?)",
+        (openid, nickname, avatar_url, now, now)
+    )
     conn.commit()
-    deleted = cursor.rowcount  # 删除行数
+    conn.close()
+
+    return jsonify({
+        "status": "success",
+        "openid": openid,
+        "nickname": nickname,
+        "avatar_url": avatar_url
+    })
+
+
+# ===================== 删除指定Openid的用户 ===================== #
+@app.route('/api/delete_user/<openid>', methods=['DELETE'])
+def delete_user(openid):
+    """根据 openid 删除用户，并级联删除相关记录"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM favorites WHERE openid=?", (openid,))
+    cursor.execute("DELETE FROM leaderboard WHERE openid=?", (openid,))
+    cursor.execute("DELETE FROM users WHERE openid=?", (openid,))
+    deleted = cursor.rowcount
+    conn.commit()
     conn.close()
     if deleted:
-        return jsonify({"status": "success", "msg": f"用户 id={user_id} 已删除"})
+        return jsonify({"status": "success", "msg": f"用户 openid={openid} 及其相关数据已全部删除"})
     else:
-        return jsonify({"status": "fail", "msg": f"未找到 id={user_id} 的用户"})
+        return jsonify({"status": "fail", "msg": f"未找到 openid={openid} 的用户"})
+
 
 # ===================== 查询所有用户 ===================== #
 @app.route('/api/users', methods=['GET'])
@@ -244,14 +199,14 @@ def get_all_users():
         "count": len(user_list),
         "users": user_list
     })
-
+'''
 # ===================== 收藏功能相关 ===================== #
 @app.route('/api/get_favorites', methods=['GET', 'POST'])
 def get_favorites():
     """获取用户收藏列表 - 兼容多种参数传递方式 (◕‿◕✿)"""
     print("📩 接收到收藏列表请求: method={}, args={}, json={}, form={}".format(
-        request.method, 
-        dict(request.args), 
+        request.method,
+        dict(request.args),
         request.get_json(silent=True) or "No JSON",
         dict(request.form)
     ))
@@ -385,7 +340,87 @@ def remove_favorite():
     else:
         print(f"⚠️ 取消收藏失败: 未找到用户 {openid} 的歌曲 {music_id} (；ω；)")
         return jsonify({"status": "fail", "msg": "未找到收藏记录 (；ω；)"})
+'''
+# ===================== 收藏功能相关 ===================== #
+@app.route('/api/favorite/get', methods=['POST'])
+def get_favorites():
+    """根据 openid 返回收藏的 music_id / name / author 数组（三个数组下标对应）"""
+    data = request.get_json()
+    openid = data.get('openid') if data else None
 
+    if not openid:
+        return jsonify({"status": "fail", "msg": "缺少 openid 参数"}), 400
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT music_id, music_name, music_author FROM favorites WHERE openid=? ORDER BY add_time DESC",
+        (openid,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    # 三个数组下标对应
+    fav_ids     = [row[0] for row in rows]
+    fav_names   = [row[1] for row in rows]
+    fav_authors = [row[2] for row in rows]
+
+    return jsonify({
+        "status": "success",
+        "fav_ids": fav_ids,
+        "fav_names": fav_names,
+        "fav_authors": fav_authors,
+    })
+
+
+@app.route('/api/favorite/add', methods=['POST'])
+def add_favorite():
+    data = request.get_json()
+    openid = data.get('openid')
+    music_id = data.get('music_id')
+    music_name = data.get('music_name')
+    music_author = data.get('music_author')
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO favorites 
+            (openid, music_id, music_name, music_author, add_time) 
+            VALUES (?, ?, ?, ?, ?)
+            """, (openid, music_id, music_name, music_author, now))
+        conn.commit()
+        conn.close()
+        print(f"✅ 添加收藏成功: 用户 {openid} 收藏了《{music_name}》 (◕‿◕✿)")
+        return jsonify({"status": "success", "msg": "收藏成功 (◕‿◕✿)"})
+    except Exception as e:
+        conn.close()
+        print(f"❌ 添加收藏失败: {str(e)} (；ω；)")
+        return jsonify({"status": "fail", "msg": f"数据库错误: {str(e)} (；ω；)"}), 500
+
+@app.route('/api/favorite/remove', methods=['POST'])
+def remove_favorite():
+    data = request.get_json(silent=True) or request.form
+    openid = data.get('openid')
+    music_id = data.get('music_id')
+    
+    if not all([openid, music_id]):
+        print("❌ 参数不完整，缺少openid或music_id (；ω；)")
+        return jsonify({"status": "fail", "msg": "参数不完整 (´；ω；｀)"}), 400
+    
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM favorites WHERE openid=? AND music_id=?", (openid, music_id))
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+    if deleted:
+        print(f"✅ 取消收藏成功: 用户 {openid} 取消了歌曲 {music_id} (´；ω；｀)")
+        return jsonify({"status": "success", "msg": "取消收藏成功 (´；ω；｀)"})
+    else:
+        print(f"⚠️ 取消收藏失败: 未找到用户 {openid} 的歌曲 {music_id} (；ω；)")
+        return jsonify({"status": "fail", "msg": "未找到收藏记录 (；ω；)"})
 # ===================== 排行榜相关接口 ===================== #
 @app.route('/api/get_rank', methods=['GET'])
 def get_rank():
@@ -422,6 +457,32 @@ def get_rank():
         "rankList": rank_list
     })
 
+@app.route('/debug/favorites')
+def debug_fav_grouped():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT openid, music_id, music_name, music_author, add_time FROM favorites ORDER BY openid")
+    rows = cursor.fetchall()
+    conn.close()
+
+    grouped = {}
+    for openid, music_id, music_name, music_author, add_time in rows:
+        if openid not in grouped:
+            grouped[openid] = []
+        grouped[openid].append({
+            "music_id": music_id,
+            "music_name": music_name,
+            "music_author": music_author,
+            "add_time": add_time
+        })
+
+    # 转为数组形式输出
+    result = [
+        {"openid": openid, "favorites": favs}
+        for openid, favs in grouped.items()
+    ]
+
+    return jsonify(result)
 @app.route('/api/upload_rank', methods=['POST'])
 def upload_rank():
     """上传排行榜成绩"""
@@ -497,27 +558,19 @@ def upload_rank():
         return jsonify({"status": "fail", "msg": f"数据库错误: {str(e)}"}), 500
     finally:
         conn.close()
-
-# ===================== 健康检查接口 ===================== #
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """健康检查接口，用于测试服务器是否正常运行"""
-    return jsonify({
-        "status": "success",
-        "message": "服务器运行正常",
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
+@app.route('/debug/users')
+def debug_users():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users")
+    rows = cursor.fetchall()
+    conn.close()
+    return jsonify(rows)
 
 # ===================== 启动服务器 ===================== #
 if __name__ == '__main__':
     init_db()  # 启动前确保数据库已创建
     print("(o゜▽゜)o☆ Flask 服务器启动中...")
-    print("(◕‿◕) 服务器功能概述:")
-    print("  ✓ 用户登录/注册系统")
-    print("  ✓ 用户信息管理")
-    print("  ✓ 音乐收藏功能")
-    print("  ✓ 游戏排行榜系统")
-    print("  ✓ 跨域请求支持")
     app.run(
         host='0.0.0.0',      # 允许局域网访问
         port=5000,           # 监听端口

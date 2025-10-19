@@ -27,6 +27,7 @@ Component({
       });
     },
 
+
     onMenuItemTap: function(e) {
       const url = e.currentTarget.dataset.url;
       if (url) {
