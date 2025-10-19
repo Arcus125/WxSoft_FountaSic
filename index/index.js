@@ -96,7 +96,7 @@ Component({
       const that = this;
       const config=require('../utils/config.js');
       wx.request({
-        url: `${config.DatabaseConfig.base_url}/api/add_favorite`,
+        url: `${config.DatabaseConfig.base_url}/api/favorite/add`,
         method: 'POST',
         header: { 'Content-Type': 'application/json' },
         data: { openid, music_id, music_name, music_author },
@@ -119,7 +119,7 @@ Component({
       const that = this;
       const config=require('../utils/config.js');
       wx.request({
-        url: `${config.DatabaseConfig.base_url}/api/remove_favorite`,
+        url: `${config.DatabaseConfig.base_url}/api/favorite/remove`,
         method: 'POST',
         header: { 'Content-Type': 'application/json' },
         data: { openid, music_id },
@@ -148,37 +148,37 @@ Component({
       });
     },
 
-markFavs() {
-  const openid = wx.getStorageSync('openid');
-  const that = this;
-  const config=require('../utils/config.js');
-  // ✅ 确保使用正确的 GET 请求方式
-  const requestUrl = config.DatabaseConfig.base_url+'/api/get_favorites?openid=${encodeURIComponent(openid)}';
-  
-  wx.request({
-    url: requestUrl,
-    method: 'GET',
-    success(res) {
-      console.log('🎵 获取收藏列表响应:', res.data);
-      if (res.data.status === 'success') {
-        const favIds = res.data.favorites.map(f => f.music_id);
-        console.log('🎵 用户收藏的歌曲ID:', favIds);
+    markFavs() {
+      const openid = wx.getStorageSync('openid');
+      const config = require('../utils/config.js');
+      wx.request({
+        url: config.DatabaseConfig.base_url + '/api/favorite/get',
+        method: 'POST',
+        data: {
+          openid:openid,
+        },
+        header: { 'Content-Type': 'application/json' },
+        success: (res) => {
+          console.log(res.data);
+          if (res.data.status === 'success') {
+            const favIds = res.data.fav_ids || [];
+            const mark = list => list.map(item => ({
+              ...item,
+              _fav: favIds.includes(item.id)
+            }));
         
-        const mark = list => list.map(item => ({
-          ...item,
-          _fav: favIds.includes(item.id)
-        }));
-        
-        that.setData({
-          displayList: mark(that.data.displayList),
-          cardList: mark(that.data.cardList)
-        });
-        console.log('🎵 收藏标记完成');
-      }
+            this.setData({
+              cardList: mark(this.data.cardList),
+              displayList: mark(this.data.displayList)
+            });
+          }
+        },
+        fail: (err) => {
+          console.error('❌ 获取收藏失败:', err);
+        }
+      });
     },
-  });
-},
-
+    
     onCardTap(e) {
       const { id, name, author, duration } = e.currentTarget.dataset;
       wx.showModal({

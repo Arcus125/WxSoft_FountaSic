@@ -199,7 +199,7 @@ def get_all_users():
         "count": len(user_list),
         "users": user_list
     })
-
+'''
 # ===================== 收藏功能相关 ===================== #
 @app.route('/api/get_favorites', methods=['GET', 'POST'])
 def get_favorites():
@@ -340,7 +340,87 @@ def remove_favorite():
     else:
         print(f"⚠️ 取消收藏失败: 未找到用户 {openid} 的歌曲 {music_id} (；ω；)")
         return jsonify({"status": "fail", "msg": "未找到收藏记录 (；ω；)"})
+'''
+# ===================== 收藏功能相关 ===================== #
+@app.route('/api/favorite/get', methods=['POST'])
+def get_favorites():
+    """根据 openid 返回收藏的 music_id / name / author 数组（三个数组下标对应）"""
+    data = request.get_json()
+    openid = data.get('openid') if data else None
 
+    if not openid:
+        return jsonify({"status": "fail", "msg": "缺少 openid 参数"}), 400
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT music_id, music_name, music_author FROM favorites WHERE openid=? ORDER BY add_time DESC",
+        (openid,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    # 三个数组下标对应
+    fav_ids     = [row[0] for row in rows]
+    fav_names   = [row[1] for row in rows]
+    fav_authors = [row[2] for row in rows]
+
+    return jsonify({
+        "status": "success",
+        "fav_ids": fav_ids,
+        "fav_names": fav_names,
+        "fav_authors": fav_authors,
+    })
+
+
+@app.route('/api/favorite/add', methods=['POST'])
+def add_favorite():
+    data = request.get_json()
+    openid = data.get('openid')
+    music_id = data.get('music_id')
+    music_name = data.get('music_name')
+    music_author = data.get('music_author')
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO favorites 
+            (openid, music_id, music_name, music_author, add_time) 
+            VALUES (?, ?, ?, ?, ?)
+            """, (openid, music_id, music_name, music_author, now))
+        conn.commit()
+        conn.close()
+        print(f"✅ 添加收藏成功: 用户 {openid} 收藏了《{music_name}》 (◕‿◕✿)")
+        return jsonify({"status": "success", "msg": "收藏成功 (◕‿◕✿)"})
+    except Exception as e:
+        conn.close()
+        print(f"❌ 添加收藏失败: {str(e)} (；ω；)")
+        return jsonify({"status": "fail", "msg": f"数据库错误: {str(e)} (；ω；)"}), 500
+
+@app.route('/api/favorite/remove', methods=['POST'])
+def remove_favorite():
+    data = request.get_json(silent=True) or request.form
+    openid = data.get('openid')
+    music_id = data.get('music_id')
+    
+    if not all([openid, music_id]):
+        print("❌ 参数不完整，缺少openid或music_id (；ω；)")
+        return jsonify({"status": "fail", "msg": "参数不完整 (´；ω；｀)"}), 400
+    
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM favorites WHERE openid=? AND music_id=?", (openid, music_id))
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+    if deleted:
+        print(f"✅ 取消收藏成功: 用户 {openid} 取消了歌曲 {music_id} (´；ω；｀)")
+        return jsonify({"status": "success", "msg": "取消收藏成功 (´；ω；｀)"})
+    else:
+        print(f"⚠️ 取消收藏失败: 未找到用户 {openid} 的歌曲 {music_id} (；ω；)")
+        return jsonify({"status": "fail", "msg": "未找到收藏记录 (；ω；)"})
 # ===================== 排行榜相关接口 ===================== #
 @app.route('/api/get_rank', methods=['GET'])
 def get_rank():
@@ -377,6 +457,32 @@ def get_rank():
         "rankList": rank_list
     })
 
+@app.route('/debug/favorites')
+def debug_fav_grouped():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT openid, music_id, music_name, music_author, add_time FROM favorites ORDER BY openid")
+    rows = cursor.fetchall()
+    conn.close()
+
+    grouped = {}
+    for openid, music_id, music_name, music_author, add_time in rows:
+        if openid not in grouped:
+            grouped[openid] = []
+        grouped[openid].append({
+            "music_id": music_id,
+            "music_name": music_name,
+            "music_author": music_author,
+            "add_time": add_time
+        })
+
+    # 转为数组形式输出
+    result = [
+        {"openid": openid, "favorites": favs}
+        for openid, favs in grouped.items()
+    ]
+
+    return jsonify(result)
 @app.route('/api/upload_rank', methods=['POST'])
 def upload_rank():
     """上传排行榜成绩"""
