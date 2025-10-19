@@ -7,12 +7,6 @@ Page({
     errorMsg: ''
   },
 
-  onLoad() {
-    console.log('🎵 收藏页面 onLoad');
-    const openid = wx.getStorageSync('openid');
-    this.setData({ openid });
-  },
-
   onShow() {
     console.log('🎵 收藏页面 onShow');
     if (typeof this.getTabBar === 'function' && this.getTabBar()) {
@@ -21,10 +15,10 @@ Page({
     this.loadFavorites();
   },
 
-  loadFavorites() {
+  onLoad() {
     const that = this;
     const openid = wx.getStorageSync('openid');
-    
+    this.setData({ openid });
     console.log('🎵 开始加载收藏列表，openid:', openid);
     
     if (!openid) {
