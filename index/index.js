@@ -27,24 +27,20 @@ Component({
       this.markFavs();
     }
   },
-
   methods: {
     onRippleTap() { 
       this.setData({ showRipple: true }); 
       setTimeout(() => this.setData({ showRipple: false }), 600); 
     },
-
     onSearchInput(e) { 
       const searchText = e.detail.value; 
       this.setData({ searchText }); 
       this.filterData(searchText); 
     },
-    
     onClearSearch() { 
       this.setData({ searchText: '' }); 
       this.filterData(''); 
     },
-
     filterData(searchText) {
       if (!searchText) {
         this.setData({ 
@@ -87,11 +83,6 @@ Component({
       const name = e.currentTarget.dataset.name || '';
       const author = e.currentTarget.dataset.author || '';
       const openid = wx.getStorageSync('openid');
-      
-      if (!openid) {
-        wx.showToast({ title: '请先登录', icon: 'none' });
-        return;
-      }
       
       const target = this.data.displayList.find(i => i.id === id);
       if (target._fav) {
@@ -157,15 +148,12 @@ Component({
       });
     },
 
-    // 在 index/index.js 的 markFavs 方法中修复
 markFavs() {
   const openid = wx.getStorageSync('openid');
-  if (!openid) return;
-  
   const that = this;
   const config=require('../utils/config.js');
   // ✅ 确保使用正确的 GET 请求方式
-  const requestUrl = `${config.DatabaseConfig.base_url}/api/get_favorites?openid=${encodeURIComponent(openid)}`;
+  const requestUrl = config.DatabaseConfig.base_url+'/api/get_favorites?openid=${encodeURIComponent(openid)}';
   
   wx.request({
     url: requestUrl,
@@ -185,15 +173,9 @@ markFavs() {
           displayList: mark(that.data.displayList),
           cardList: mark(that.data.cardList)
         });
-        
         console.log('🎵 收藏标记完成');
-      } else {
-        console.error('❌ 获取收藏列表失败:', res.data.msg);
       }
     },
-    fail(err) {
-      console.error('❌ 获取收藏列表网络错误:', err);
-    }
   });
 },
 

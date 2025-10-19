@@ -1,143 +1,78 @@
-const defaultAvatarUrl = 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'
-
 Page({
   data: {
-    avatarUrl: defaultAvatarUrl,
+    avatarUrl: '',
     nickname: '',
-    usercode: null,
-    openid: null,
+    openid: '',
   },
-
-  onLoad: function(options) {
+  onLoad(options) {
     const app = getApp();
-    const that = this;
-
-    app.globalData.avatarUrl = wx.getStorageSync('avatarUrl') || '';
-    app.globalData.nickname = wx.getStorageSync('nickname') || '';
-
     const cachedOpenid = wx.getStorageSync('openid');
     if (cachedOpenid) {
       console.log('发现缓存的openid:', cachedOpenid);
-      this.setData({
-        openid: cachedOpenid
-      });
-
-      wx.redirectTo({
-        url: '/index/mode/mode',
-      });
+      app.globalData.openid = cachedOpenid;
+      app.globalData.avatarUrl = wx.getStorageSync('avatarUrl');
+      app.globalData.nickname = wx.getStorageSync('nickname');
+      wx.switchTab({ url: '/index/index' });
       return;
     }
-    
-    wx.showLoading({
-      title: '加载中...',
-      mask: true
-    });
-
+    wx.showLoading({ title: '加载中...', mask: true });
     wx.login({
-      success: function(res) {
+      success: (res) => {
         if (res.code) {
-          that.setData({
-            usercode: res.code
-          });
-          that.sendCodeToServer(res.code, 0);
-        } 
-      },
-    });
-  },
-
-  onNicknameInput: function(e) {
-    const value = e.detail.value;
-    this.setData({
-      nickname: value
-    });
-  },
-  
-  onChooseAvatar(e) {
-    const { avatarUrl } = e.detail;
-    this.setData({
-      avatarUrl,
-    });
-  },
-
-  TapLogin: function(e) {
-    const that = this;
-    console.log('开始注册流程');
-
-    if (!this.data.nickname.trim()) {
-      wx.showToast({ title: '请输入昵称', icon: 'none' });
-      return;
-    }
-
-    const app = getApp();
-    app.globalData.nickname = this.data.nickname;
-    app.globalData.avatarUrl = this.data.avatarUrl;
-    
-    this.executeRegister();
-  },
-
-  executeRegister: function() {
-    const that = this;
-    wx.login({
-      success: function(res) {
-        if (res.code) {
-          that.setData({
-            usercode: res.code
-          });
-          that.sendCodeToServer(res.code, 1);
+          this.sendCodeToServer(res.code, '/api/login');
         }
-      },
+      }
     });
   },
-  
-  sendCodeToServer: function(code, registerType) {
-    const that = this;
-    console.log(`发送code到服务器, registerType: ${registerType}, code:`, code);
-    const config=require('../utils/config.js');
+  onNicknameInput(e) {
+    this.setData({ nickname: e.detail.value });
+  },
+  onChooseAvatar(e) {
+    this.setData({ avatarUrl: e.detail.avatarUrl });
+  },
+  TapLogin(e) {
+    console.log('开始注册流程');
+    wx.showLoading({ title: '注册中...', mask: true });
+    wx.login({
+      success: (res) => {
+        if (res.code) {
+          this.sendCodeToServer(res.code, '/api/register');
+        }
+      }
+    });
+  },
+  sendCodeToServer(code, methon) {
+    const config = require('../utils/config.js');
     wx.request({
-      url: config.DatabaseConfig.login_url,
+      url: config.DatabaseConfig.base_url + methon,
       method: 'POST',
       data: {
-        code: code,
-        register: registerType,
-        nickname: registerType === 1 ? this.data.nickname : '',
-        avatarUrl: registerType === 1 ? this.data.avatarUrl : ''
+        code,
+        nickname: this.data.nickname,
+        avatarUrl: this.data.avatarUrl,
       },
-      header: {
-        'Content-Type': 'application/json'
-      },
+      header: { 'Content-Type': 'application/json' },
       success: (res) => {
         console.log("服务器响应:", res.data);
         wx.hideLoading();
-        if (res.data.status === 'success' && res.data.existUser === 1) {
-          const openid = res.data.openid;
-          const avatarUrl = res.data.avatar_url || that.data.avatarUrl;
-          const nickname = res.data.nickname || that.data.nickname;
+        if (res.data.status === 'success') {
+          const { openid, avatar_url, nickname } = res.data;
           wx.setStorageSync('openid', openid);
-          wx.setStorageSync('avatarUrl', avatarUrl);
+          wx.setStorageSync('avatarUrl', avatar_url);
           wx.setStorageSync('nickname', nickname);
-          // 更新全局数据
-          getApp().globalData.openid = openid;
-          getApp().globalData.avatarUrl = avatarUrl;
-          getApp().globalData.nickname = nickname;
-
-          wx.redirectTo({
-            url: '/index/mode/mode',
-          });
+          const app = getApp();
+          app.globalData.openid = openid;
+          app.globalData.avatarUrl = avatar_url;
+          app.globalData.nickname = nickname;
+          wx.switchTab({ url: '/index/index' });
         } else {
-          wx.showToast({
-            title: '登录失败，请重试',
-            icon: 'none'
-          });
+          wx.showToast({ title: '请注册', icon: 'none' });
         }
       },
       fail: (error) => {
         wx.hideLoading();
         console.error('请求失败:', error);
-
-        wx.showToast({
-          title: '网络请求失败',
-          icon: 'none'
-        });
+        wx.showToast({ title: '网络请求失败', icon: 'none' });
       }
     });
   }
