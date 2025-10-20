@@ -8,7 +8,6 @@
   <view class="progress-section">
     <view class="progress-bar">
       <view class="progress-inner" style="width: {{progressPercent}};"></view>
-      </view>
     </view>
     <view class="time-info">
       <text class="current-time">{{currentTimeText}}</text>
@@ -41,8 +40,9 @@
   </view>
 
   <view class="mode-info">
-  <text class="mode-text">当前模式: 
-    <block wx:if="{{selectedMode === 'single'}}">单人模式</block>
-    <block wx:else>双人模式</block>
-  </text>
+    <text class="mode-text">当前模式: 
+      <block wx:if="{{selectedMode === 'single'}}">单人模式</block>
+      <block wx:else>双人模式</block>
+    </text>
+  </view>
 </view>
