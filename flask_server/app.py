@@ -6,6 +6,8 @@ import urllib3                                              # 控制HTTPS请求�
 from datetime import datetime                               # 获取当前时间，用于记录注册/登录时间
 import os                                                   # 文件系统操作（判断文件存在等）
 from flask_cors import CORS                                 # 跨域请求支持
+from werkzeug.utils import secure_filename
+from flask import send_from_directory
 
 app = Flask(__name__, static_folder='image', static_url_path='/image')# 创建Flask应用对象
 CORS(app)  # 启用跨域支持，方便前后端分离开发
@@ -15,6 +17,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 WECHAT_APPID = "wxc3531de3f8cb9b73"      # 微信小程序的AppID
 WECHAT_SECRET = "49f90fdedeff9a7c0d1fca8b7bcf277e"  # 微信小程序的AppSecret
 DB_PATH = "users.db"                     # SQLite数据库文件路径（项目根目录下）
+# 让 /uploads 下的文件可被访问
+
+
+@app.route('/uploads/<path:filename>')
+def serve_upload(filename):
+    return send_from_directory('uploads', filename)
 
 @app.route('/image/<path:filename>')
 def serve_image(filename):
@@ -119,6 +127,49 @@ def api_login():
         return jsonify({
             "status": "fail",
         })
+
+@app.route('/api/upload/image', methods=['POST'])
+def api_upload_image():
+    f = request.files.get('file')
+    if not f:
+        return jsonify({'status':'fail','msg':'no file'}), 400
+
+    openid = request.form.get('openid')
+    if not openid:
+        return jsonify({'status':'fail','msg':'missing openid'}), 400
+
+    # ========== 提取文件后缀名 ==========
+    ext = f.filename.rsplit('.', 1)[-1].lower()
+
+    # ========== 重命名: openid.xxx ==========
+    filename = secure_filename(f"{openid}.{ext}")
+
+    upload_dir = "./uploads"
+    if not os.path.exists(upload_dir):
+        os.makedirs(upload_dir)
+
+    save_path = os.path.join(upload_dir, filename)
+    f.save(save_path)
+
+    # 生成可访问地址（根据部署修改）
+    public_url = f"http://127.0.0.1:5000/uploads/{filename}"
+
+    # ========== ★ 同步更新数据库中的 avatar_url ==========
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET avatar_url=? WHERE openid=?",
+        (public_url, openid)
+    )
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        'status': 'success',
+        'filename': filename,
+        'avatar_url': public_url
+    })
+
 @app.route('/api/register', methods=['POST'])
 def api_register():
     data = request.get_json()
@@ -145,14 +196,17 @@ def api_register():
     )
     conn.commit()
     conn.close()
-
+    '''
+    return jsonify({
+        "status": "fail",
+    })
+    '''
     return jsonify({
         "status": "success",
         "openid": openid,
         "nickname": nickname,
         "avatar_url": avatar_url
     })
-
 
 # ===================== 删除指定Openid的用户 ===================== #
 @app.route('/api/delete_user/<openid>', methods=['DELETE'])
@@ -199,148 +253,7 @@ def get_all_users():
         "count": len(user_list),
         "users": user_list
     })
-'''
-# ===================== 收藏功能相关 ===================== #
-@app.route('/api/get_favorites', methods=['GET', 'POST'])
-def get_favorites():
-    """获取用户收藏列表 - 兼容多种参数传递方式 (◕‿◕✿)"""
-    print("📩 接收到收藏列表请求: method={}, args={}, json={}, form={}".format(
-        request.method,
-        dict(request.args),
-        request.get_json(silent=True) or "No JSON",
-        dict(request.form)
-    ))
-    
-    if request.method == 'GET':
-        openid = request.args.get('openid')
-        print(f"🔍 GET请求提取openid: {openid}")
-    else:
-        data = request.get_json(silent=True) or request.form
-        openid = data.get('openid') if data else None
-        print(f"🔍 POST请求提取openid: {openid}, 数据来源: {'JSON' if request.get_json(silent=True) else 'FORM'}")
-    
-    print(f"🎯 最终解析的openid: {openid}")
-    
-    if not openid:
-        print("❌ 错误：openid参数为空 (；ω；)")
-        return jsonify({
-            "status": "fail", 
-            "msg": "缺少openid参数 (´；ω；｀)",
-            "debug_info": {
-                "method": request.method,
-                "args_keys": list(request.args.keys()),
-                "has_json": bool(request.get_json(silent=True)),
-                "form_keys": list(request.form.keys())
-            }
-        }), 400
-    
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT music_id, music_name, music_author, add_time 
-        FROM favorites WHERE openid=? ORDER BY add_time DESC
-        """, (openid,))
-    favorites = cursor.fetchall()
-    conn.close()
-    
-    favorite_list = [
-        {
-            "music_id": row[0],
-            "music_name": row[1],
-            "music_author": row[2],
-            "add_time": row[3]
-        }
-        for row in favorites
-    ]
-    
-    print(f"✅ 成功返回收藏列表: 用户 {openid} 共有 {len(favorite_list)} 个收藏 (◕‿◕✿)")
-    
-    return jsonify({
-        "status": "success",
-        "favorites": favorite_list,
-        "count": len(favorite_list)
-    })
 
-@app.route('/api/add_favorite', methods=['POST'])
-def add_favorite():
-    """添加收藏 (◕‿◕✿)"""
-    print("📩 接收到添加收藏请求: json={}, form={}".format(
-        request.get_json(silent=True) or "No JSON",
-        dict(request.form)
-    ))
-    
-    data = request.get_json(silent=True) or request.form
-    openid = data.get('openid')
-    music_id = data.get('music_id')
-    music_name = data.get('music_name')
-    music_author = data.get('music_author')
-    
-    print(f"🔍 解析参数 - openid: {openid}, music_id: {music_id}, music_name: {music_name}")
-    
-    if not all([openid, music_id, music_name]):
-        missing = []
-        if not openid: missing.append("openid")
-        if not music_id: missing.append("music_id") 
-        if not music_name: missing.append("music_name")
-        print(f"❌ 参数不完整，缺少: {missing} (；ω；)")
-        return jsonify({
-            "status": "fail", 
-            "msg": f"参数不完整，缺少: {', '.join(missing)} (´；ω；｀)"
-        }), 400
-    
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO favorites 
-            (openid, music_id, music_name, music_author, add_time) 
-            VALUES (?, ?, ?, ?, ?)
-            """, (openid, music_id, music_name, music_author, now))
-        conn.commit()
-        conn.close()
-        print(f"✅ 添加收藏成功: 用户 {openid} 收藏了《{music_name}》 (◕‿◕✿)")
-        return jsonify({"status": "success", "msg": "收藏成功 (◕‿◕✿)"})
-    except Exception as e:
-        conn.close()
-        print(f"❌ 添加收藏失败: {str(e)} (；ω；)")
-        return jsonify({"status": "fail", "msg": f"数据库错误: {str(e)} (；ω；)"}), 500
-
-@app.route('/api/remove_favorite', methods=['POST'])
-def remove_favorite():
-    """取消收藏 (◕‿◕✿)"""
-    print("📩 接收到取消收藏请求: json={}, form={}".format(
-        request.get_json(silent=True) or "No JSON",
-        dict(request.form)
-    ))
-    
-    data = request.get_json(silent=True) or request.form
-    openid = data.get('openid')
-    music_id = data.get('music_id')
-    
-    print(f"🔍 解析参数 - openid: {openid}, music_id: {music_id}")
-    
-    if not all([openid, music_id]):
-        print("❌ 参数不完整，缺少openid或music_id (；ω；)")
-        return jsonify({"status": "fail", "msg": "参数不完整 (´；ω；｀)"}), 400
-    
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM favorites WHERE openid=? AND music_id=?", (openid, music_id))
-    conn.commit()
-    deleted = cursor.rowcount
-    conn.close()
-    
-    if deleted:
-        print(f"✅ 取消收藏成功: 用户 {openid} 取消了歌曲 {music_id} (´；ω；｀)")
-        return jsonify({"status": "success", "msg": "取消收藏成功 (´；ω；｀)"})
-    else:
-        print(f"⚠️ 取消收藏失败: 未找到用户 {openid} 的歌曲 {music_id} (；ω；)")
-        return jsonify({"status": "fail", "msg": "未找到收藏记录 (；ω；)"})
-'''
 # ===================== 收藏功能相关 ===================== #
 @app.route('/api/favorite/get', methods=['POST'])
 def get_favorites():
@@ -421,42 +334,7 @@ def remove_favorite():
     else:
         print(f"⚠️ 取消收藏失败: 未找到用户 {openid} 的歌曲 {music_id} (；ω；)")
         return jsonify({"status": "fail", "msg": "未找到收藏记录 (；ω；)"})
-# ===================== 排行榜相关接口 ===================== #
-@app.route('/api/get_rank', methods=['GET'])
-def get_rank():
-    """获取排行榜"""
-    mode = request.args.get('mode', 'single')
-    limit = int(request.args.get('limit', 50))
     
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT openid, nickname, avatar_url, score, play_time 
-        FROM leaderboard 
-        WHERE mode=? 
-        ORDER BY score DESC 
-        LIMIT ?
-    """, (mode, limit))
-    ranks = cursor.fetchall()
-    conn.close()
-    
-    rank_list = []
-    for i, row in enumerate(ranks):
-        rank_list.append({
-            "rank": i + 1,
-            "openid": row[0],
-            "name": row[1] or "匿名用户",
-            "avatar": row[2] or "/image/default_avatar.png",
-            "score": row[3],
-            "play_time": row[4]
-        })
-    
-    return jsonify({
-        "status": "success",
-        "mode": mode,
-        "rankList": rank_list
-    })
-
 @app.route('/debug/favorites')
 def debug_fav_grouped():
     conn = sqlite3.connect(DB_PATH)
@@ -483,6 +361,44 @@ def debug_fav_grouped():
     ]
 
     return jsonify(result)
+
+# ===================== 排行榜相关接口 ===================== #
+@app.route('/api/get_rank', methods=['POST'])
+def get_rank():
+    """获取排行榜（POST方式）"""
+    data = request.get_json() or {}
+    mode = data.get('mode', 'single')
+    limit = int(data.get('limit', 50))
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT openid, nickname, avatar_url, score, play_time 
+        FROM leaderboard 
+        WHERE mode=? 
+        ORDER BY score DESC 
+        LIMIT ?
+    """, (mode, limit))
+    ranks = cursor.fetchall()
+    conn.close()
+
+    rank_list = []
+    for i, row in enumerate(ranks):
+        rank_list.append({
+            "rank": i + 1,
+            "openid": row[0],
+            "name": row[1] or "匿名用户",
+            "avatar": row[2] or "/image/default_avatar.png",
+            "score": row[3],
+            "play_time": row[4]
+        })
+
+    return jsonify({
+        "status": "success",
+        "mode": mode,
+        "rankList": rank_list
+    })
+
 @app.route('/api/upload_rank', methods=['POST'])
 def upload_rank():
     """上传排行榜成绩"""

@@ -23,81 +23,59 @@ Component({
       this.loadRankData();
     },
 
+    // ======== 改成 POST 获取排行榜 ========
     loadRankData() {
-      const mode = this.data.mode;
-      const config=require('../utils/config.js');
-      const url = `${config.DatabaseConfig.base_url}/api/get_rank?mode=${mode}`;
+      const { mode } = this.data;
+      const config = require('../utils/config.js');
 
       wx.request({
-        url,
-        method: 'GET',
+        url: `${config.DatabaseConfig.base_url}/api/get_rank`,
+        method: 'POST',
         header: { 'Content-Type': 'application/json' },
+        data: { mode, limit: 50 },
         success: (res) => {
           if (res.statusCode === 200 && res.data.rankList) {
             const openid = wx.getStorageSync('openid');
-            let userRank = null;
-            let userScore = null;
+            let userRank = null, userScore = null;
             
-            if (openid) {
-              const userEntry = res.data.rankList.find(item => item.openid === openid);
-              if (userEntry) {
-                userRank = userEntry.rank;
-                userScore = userEntry.score;
-              }
+            const entry = res.data.rankList.find(r => r.openid === openid);
+            if (entry) {
+              userRank = entry.rank;
+              userScore = entry.score;
             }
-            
-            this.setData({ 
-              rankList: res.data.rankList,
-              userRank,
-              userScore
-            });
-            
-            // 优化：添加空榜提示
+
+            this.setData({ rankList: res.data.rankList, userRank, userScore });
+
             if (res.data.rankList.length === 0) {
-              wx.showToast({ 
-                title: '暂无排行榜数据', 
-                icon: 'none',
-                duration: 2000
-              });
+              wx.showToast({ title: '暂无排行榜数据', icon: 'none' });
             }
           } else {
             wx.showToast({ title: '获取排行榜失败', icon: 'none' });
           }
         },
-        fail: (err) => {
-          console.error('排行榜获取失败:', err);
-          wx.showToast({ title: '服务器连接失败', icon: 'none' });
-        }
+        fail: () => wx.showToast({ title: '服务器连接失败', icon: 'none' })
       });
     },
 
+    // ======== 修正 uploadScore 请求路径 ========
     uploadScore(score, mode) {
+      const config = require('../utils/config.js');
       const openid = wx.getStorageSync('openid');
-      const nickname = wx.getStorageSync('nickname') || '匿名用户';
-      const avatarUrl = wx.getStorageSync('avatarUrl') || '';
-      const config=require('../utils/config.js');
-      if (!openid) {
-        console.log('用户未登录，无法上传成绩');
-        return;
-      }
+      if (!openid) return;
 
       wx.request({
-        url: `${config.DatabaseConfig.base_url}/api/get_rankings`,
+        url: `${config.DatabaseConfig.base_url}/api/upload_rank`,
         method: 'POST',
-        data: {
-          openid: openid,
-          nickname: nickname,
-          avatar_url: avatarUrl,
-          mode: mode,
-          score: score
-        },
         header: { 'Content-Type': 'application/json' },
-        success: (res) => {
-          console.log('成绩上传成功:', res.data);
+        data: {
+          openid,
+          nickname: wx.getStorageSync('nickname') || '匿名用户',
+          avatar_url: wx.getStorageSync('avatarUrl') || '',
+          mode,
+          score
         },
-        fail: (err) => {
-          console.error('成绩上传失败:', err);
-        }
+        success: res => console.log('成绩上传成功:', res.data),
+        fail: err => console.error('成绩上传失败:', err)
       });
     }
   }
