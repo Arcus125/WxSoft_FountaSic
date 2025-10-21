@@ -30,22 +30,23 @@ def serve_image(filename):
     return app.send_static_file(filename)
 
 def init_db():
-    """初始化SQLite数据库，若表不存在则自动创建"""
-    conn = sqlite3.connect(DB_PATH)  # 连接数据库，没有则自动创建
+    """初始化SQLite数据库，若表不存在则自动创建，并补齐/升级字段与索引"""
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    # 创建 users 表（存储openid、昵称、头像、时间等）
+
+    # users 表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,  -- 用户序号
-            openid TEXT UNIQUE,                    -- 用户在微信唯一标识
-            nickname TEXT,                         -- 昵称
-            avatar_url TEXT,                       -- 头像URL(暂时不可用)
-            
-            create_time TEXT,                      -- 注册时间
-            login_time TEXT                        -- 最近登录时间
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            openid TEXT UNIQUE,
+            nickname TEXT,
+            avatar_url TEXT,
+            create_time TEXT,
+            login_time TEXT
         )
     """)
-    # 新增收藏表
+
+    # favorites 表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS favorites (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,22 +58,42 @@ def init_db():
             UNIQUE(openid, music_id)
         )
     """)
-    # 新增排行榜表
+
+    # leaderboard 表（如果不存在则创建，已包含 song_id）
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS leaderboard (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             openid TEXT NOT NULL,
             nickname TEXT,
             avatar_url TEXT,
-            mode TEXT NOT NULL,
+            song_id TEXT,                -- ✅ 用于按歌曲排行
             score INTEGER NOT NULL,
-            play_time TEXT,
-            UNIQUE(openid, mode)
+            play_time TEXT
         )
     """)
+
+    # 兼容已存在的 leaderboard 表，若缺少 song_id 列则补齐
+    cursor.execute("PRAGMA table_info(leaderboard)")
+    cols = [row[1] for row in cursor.fetchall()]
+    if 'song_id' not in cols:
+        cursor.execute("ALTER TABLE leaderboard ADD COLUMN song_id TEXT")
+
+    # 创建（若不存在）唯一约束：同一首歌一个用户只保留一条成绩
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_leaderboard_song_user
+        ON leaderboard(song_id, openid)
+    """)
+
+    # 排行榜查询常用索引：按 song_id、score 排序
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_leaderboard_song_score
+        ON leaderboard(song_id, score DESC, play_time ASC)
+    """)
+
     conn.commit()
     conn.close()
-    print("(●'◡'●) 数据库初始化完成：users.db")
+    print("(●'◡'●) 数据库初始化/升级完成：users.db")
+
 
 # ===================== 调用微信API换openid ===================== #
 def get_openid_from_wechat(code):
@@ -115,8 +136,8 @@ def api_login():
         cursor.execute(
             "UPDATE users SET login_time=? WHERE openid=?", (now, openid)
         )
-        conn.commit
-        conn.close
+        conn.commit()
+        conn.close()
         return jsonify({
             "status": "success",
             "openid": openid,
@@ -289,6 +310,7 @@ def get_favorites():
 @app.route('/api/favorite/add', methods=['POST'])
 def add_favorite():
     data = request.get_json()
+    print("DEBUG /api/favorite/add:", data)
     openid = data.get('openid')
     music_id = data.get('music_id')
     music_name = data.get('music_name')
@@ -363,24 +385,57 @@ def debug_fav_grouped():
     return jsonify(result)
 
 # ===================== 排行榜相关接口 ===================== #
-@app.route('/api/get_rank', methods=['POST'])
-def get_rank():
-    """获取排行榜（POST方式）"""
-    data = request.get_json() or {}
-    mode = data.get('mode', 'single')
-    limit = int(data.get('limit', 50))
-
+@app.route('/debug/leaderboard', methods=['GET'])
+def debug_leaderboard():
+    """调试用：查看排行榜表全部内容"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT openid, nickname, avatar_url, score, play_time 
-        FROM leaderboard 
-        WHERE mode=? 
-        ORDER BY score DESC 
-        LIMIT ?
-    """, (mode, limit))
-    ranks = cursor.fetchall()
+        SELECT id, openid, nickname, avatar_url, song_id, score, play_time
+        FROM leaderboard
+        ORDER BY song_id, score DESC
+    """)
+    rows = cursor.fetchall()
     conn.close()
+
+    # 格式化输出
+    result = []
+    for row in rows:
+        result.append({
+            "id": row[0],
+            "openid": row[1],
+            "nickname": row[2],
+            "avatar_url": row[3],
+            "song_id": row[4],
+            "score": row[5],
+            "play_time": row[6]
+        })
+
+    return jsonify(result)
+
+@app.route('/api/get_rank', methods=['POST'])
+def get_rank():
+    """获取排行榜（POST），按 song_id 维度；额外返回用户自己的排名/分数"""
+    data = request.get_json() or {}
+    song_id = data.get('song_id')                 # ✅ 必填
+    limit = int(data.get('limit', 50))            # ✅ 前端自定义
+    user_openid = data.get('openid')              # 可选：若传则返回用户排名，否则不算
+
+    if not song_id:
+        return jsonify({"status": "fail", "msg": "缺少 song_id"}), 400
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # 1) 前 N 名
+    cursor.execute("""
+        SELECT openid, nickname, avatar_url, score, play_time
+        FROM leaderboard
+        WHERE song_id=?
+        ORDER BY score DESC, play_time ASC
+        LIMIT ?
+    """, (song_id, limit))
+    ranks = cursor.fetchall()
 
     rank_list = []
     for i, row in enumerate(ranks):
@@ -393,82 +448,90 @@ def get_rank():
             "play_time": row[4]
         })
 
+    # 2) 计算用户自己的排名（若提供 openid）
+    userRank = None
+    userScore = None
+    if user_openid:
+        # 2.1 查询用户在这首歌下的分数及时间
+        cursor.execute("""
+            SELECT score, play_time
+            FROM leaderboard
+            WHERE song_id=? AND openid=?
+        """, (song_id, user_openid))
+        row = cursor.fetchone()
+        if row:
+            userScore, userPlayTime = int(row[0]), row[1]
+
+            # 2.2 计算排名（竞争排名法：所有「分数更高」的数量 + 1；同分按时间早的优先）
+            #    即 rank = 1 + count(score > userScore) + count(score = userScore and play_time < userPlayTime)
+            cursor.execute("""
+                SELECT
+                    SUM(CASE WHEN score > ? THEN 1 ELSE 0 END) +
+                    SUM(CASE WHEN score = ? AND play_time < ? THEN 1 ELSE 0 END)
+                FROM leaderboard
+                WHERE song_id=?
+            """, (userScore, userScore, userPlayTime, song_id))
+            higher_or_earlier = cursor.fetchone()[0] or 0
+            userRank = int(higher_or_earlier) + 1
+
+    conn.close()
+
     return jsonify({
         "status": "success",
-        "mode": mode,
-        "rankList": rank_list
+        "song_id": song_id,
+        "limit": limit,
+        "rankList": rank_list,
+        "userRank": userRank,
+        "userScore": userScore
     })
 
 @app.route('/api/upload_rank', methods=['POST'])
 def upload_rank():
-    """上传排行榜成绩"""
-    data = request.get_json()
+    """上传排行榜成绩（按 song_id 维度，仅保存更高分）"""
+    data = request.get_json() or {}
     openid = data.get('openid')
     nickname = data.get('nickname')
     avatar_url = data.get('avatar_url')
-    mode = data.get('mode')
+    song_id = data.get('song_id')   # ✅ 必须传
     score = data.get('score')
-    
-    if not all([openid, mode, score]):
-        return jsonify({"status": "fail", "msg": "参数不完整"}), 400
-    
+
+    if not all([openid, song_id, score]):
+        return jsonify({"status": "fail", "msg": "参数不完整（需要 openid、song_id、score）"}), 400
+
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
+
     try:
-        # 检查是否已有记录
-        cursor.execute("SELECT score FROM leaderboard WHERE openid=? AND mode=?", (openid, mode))
+        # 查该用户在该歌曲的现有成绩
+        cursor.execute(
+            "SELECT score FROM leaderboard WHERE song_id=? AND openid=?",
+            (song_id, openid)
+        )
         existing = cursor.fetchone()
-        
-        # 获取当前模式下的最低分
-        cursor.execute("SELECT MIN(score) FROM leaderboard WHERE mode=?", (mode,))
-        min_score_result = cursor.fetchone()
-        min_score = min_score_result[0] if min_score_result and min_score_result[0] is not None else 0
-        
-        # 获取当前模式下的记录数量
-        cursor.execute("SELECT COUNT(*) FROM leaderboard WHERE mode=?", (mode,))
-        count = cursor.fetchone()[0]
-        
+
         if existing:
-            # 已有记录，只有当新分数更高时才更新
-            if score > existing[0]:
+            # 只有新分数更高才更新
+            if int(score) > int(existing[0]):
                 cursor.execute("""
-                    UPDATE leaderboard 
+                    UPDATE leaderboard
                     SET score=?, nickname=?, avatar_url=?, play_time=?
-                    WHERE openid=? AND mode=?
-                """, (score, nickname, avatar_url, now, openid, mode))
-                print(f"(•̀ᴗ•́)و 更新用户 {openid} 在模式 {mode} 下的分数: {existing[0]} -> {score}")
+                    WHERE song_id=? AND openid=?
+                """, (int(score), nickname, avatar_url, now, song_id, openid))
+                msg = f"分数更新：{existing[0]} -> {score}"
             else:
-                print(f"(￣▽￣) 用户 {openid} 的分数 {score} 未超过现有分数 {existing[0]}，不更新")
+                msg = "新分数不高于历史记录，忽略"
         else:
-            # 新记录，如果榜单未满或分数高于最低分则插入
-            if count < 50 or score > min_score:
-                # 如果超过50条，删除最低分
-                if count >= 50:
-                    cursor.execute("""
-                        DELETE FROM leaderboard 
-                        WHERE id IN (
-                            SELECT id FROM leaderboard 
-                            WHERE mode=? AND score = ? 
-                            ORDER BY play_time ASC 
-                            LIMIT 1
-                        )
-                    """, (mode, min_score))
-                    print(f"(╯°□°）╯ 删除模式 {mode} 下的最低分记录: {min_score}")
-                
-                cursor.execute("""
-                    INSERT INTO leaderboard 
-                    (openid, nickname, avatar_url, mode, score, play_time) 
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (openid, nickname, avatar_url, mode, score, now))
-                print(f"(≧▽≦)/ 插入用户 {openid} 在模式 {mode} 下的新记录: {score}")
-            else:
-                print(f"(￣▽￣) 用户 {openid} 的分数 {score} 未达到上榜要求，最低分: {min_score}")
-        
+            # 首次提交则插入
+            cursor.execute("""
+                INSERT INTO leaderboard (openid, nickname, avatar_url, song_id, score, play_time)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (openid, nickname, avatar_url, song_id, int(score), now))
+            msg = "首次提交成绩"
+
         conn.commit()
-        return jsonify({"status": "success", "msg": "成绩上传成功"})
-    
+        return jsonify({"status": "success", "msg": msg})
+
     except Exception as e:
         conn.rollback()
         return jsonify({"status": "fail", "msg": f"数据库错误: {str(e)}"}), 500

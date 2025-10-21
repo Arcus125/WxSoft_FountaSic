@@ -1,82 +1,79 @@
-const app = getApp();
+const app = getApp()
+const config = require('../utils/config.js')
+
 Component({
   data: {
-    mode: 'single',
+    songList: [],        // 所有歌曲
+    songIndex: 0,        // 当前选中的索引
+    songId: null,        // 当前选中的 song_id
     rankList: [],
     userRank: null,
-    userScore: null
+    userScore: null,
   },
 
   pageLifetimes: {
     show() {
-      if (typeof this.getTabBar === 'function' && this.getTabBar()) {
-        this.getTabBar().updateSelected('/index/index2');
-      }
-      this.loadRankData();
+      this.initSongList()
     }
   },
 
   methods: {
-    setMode(e) {
-      const mode = e.currentTarget.dataset.mode;
-      this.setData({ mode });
-      this.loadRankData();
+    /** 初始化歌曲列表并加载默认排行榜 */
+    initSongList() {
+      const list = app.globalData.allMusicList || []
+      if (!list.length) return
+
+      this.setData({
+        songList: list,
+        songId: list[0].id,   // 默认第一首
+        songIndex: 0,
+      }, () => {
+        this.loadRankData()
+      })
     },
 
-    // ======== 改成 POST 获取排行榜 ========
+    /** Picker选择歌曲变化 */
+    onSongChange(e) {
+      const index = Number(e.detail.value)
+      const selectedSong = this.data.songList[index]
+
+      this.setData({
+        songIndex: index,
+        songId: selectedSong.id
+      }, () => {
+        this.loadRankData()
+      })
+    },
+
+    /** 获取排行榜 (POST) */
     loadRankData() {
-      const { mode } = this.data;
-      const config = require('../utils/config.js');
+      const { songId } = this.data
+      if (!songId) return
 
       wx.request({
         url: `${config.DatabaseConfig.base_url}/api/get_rank`,
         method: 'POST',
         header: { 'Content-Type': 'application/json' },
-        data: { mode, limit: 50 },
+        data: {
+          song_id: songId,
+          limit: 50,
+          openid: wx.getStorageSync('openid') // 用于返回自己排名（即使不在榜内）
+        },
         success: (res) => {
           if (res.statusCode === 200 && res.data.rankList) {
-            const openid = wx.getStorageSync('openid');
-            let userRank = null, userScore = null;
-            
-            const entry = res.data.rankList.find(r => r.openid === openid);
-            if (entry) {
-              userRank = entry.rank;
-              userScore = entry.score;
-            }
-
-            this.setData({ rankList: res.data.rankList, userRank, userScore });
-
-            if (res.data.rankList.length === 0) {
-              wx.showToast({ title: '暂无排行榜数据', icon: 'none' });
-            }
+            this.setData({
+              rankList: res.data.rankList,
+              userRank: res.data.userRank??null,
+              userScore: res.data.userScore??null,
+            })
           } else {
-            wx.showToast({ title: '获取排行榜失败', icon: 'none' });
+            wx.showToast({ title: '排行榜获取失败', icon: 'none' })
           }
         },
-        fail: () => wx.showToast({ title: '服务器连接失败', icon: 'none' })
-      });
-    },
-
-    // ======== 修正 uploadScore 请求路径 ========
-    uploadScore(score, mode) {
-      const config = require('../utils/config.js');
-      const openid = wx.getStorageSync('openid');
-      if (!openid) return;
-
-      wx.request({
-        url: `${config.DatabaseConfig.base_url}/api/upload_rank`,
-        method: 'POST',
-        header: { 'Content-Type': 'application/json' },
-        data: {
-          openid,
-          nickname: wx.getStorageSync('nickname') || '匿名用户',
-          avatar_url: wx.getStorageSync('avatarUrl') || '',
-          mode,
-          score
-        },
-        success: res => console.log('成绩上传成功:', res.data),
-        fail: err => console.error('成绩上传失败:', err)
-      });
+        fail: () => {
+          wx.showToast({ title: '服务器连接失败', icon: 'none' })
+        }
+      })
     }
   }
 })

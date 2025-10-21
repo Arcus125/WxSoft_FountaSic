@@ -3,42 +3,32 @@
     <text class="header-title">排行榜</text>
   </view>
 
-  <!-- 单/双人模式切换按钮 -->
-  <view class="mode-switch">
-    <view 
-      class="switch-btn {{mode==='single' ? 'active' : ''}}" 
-      bindtap="setMode" 
-      data-mode="single">
-      单人排行
+  <!-- 歌曲选择器 -->
+  <picker mode="selector" range="{{songList}}" range-key="name" value="{{songIndex}}" bindchange="onSongChange">
+    <view class="picker-box">
+      当前歌曲：{{songList[songIndex].name}}
     </view>
-    <view 
-      class="switch-btn {{mode==='double' ? 'active' : ''}}" 
-      bindtap="setMode" 
-      data-mode="double">
-      双人排行
-    </view>
-  </view>
+  </picker>
 
-  <!-- 用户当前状态 -->
+  <!-- 用户当前排名 -->
   <view class="user-status" wx:if="{{userRank || userScore}}">
-    <text class="status-text" wx:if="{{userRank}}">您的排名: 第{{userRank}}名 | 得分: {{userScore}}</text>
-    <text class="status-text" wx:else>您未上榜 | 得分: {{userScore}}</text>
+    <text wx:if="{{userRank}}">您当前排名：第 {{userRank}} 名 | 分数：{{userScore}}</text>
+    <text wx:else>您未上榜 | 得分：{{userScore}}</text>
   </view>
 
   <!-- 排行榜列表 -->
-  <scroll-view class="rank-list" scroll-y="true">
+  <scroll-view scroll-y class="rank-list">
     <view wx:for="{{rankList}}" wx:key="rank" class="rank-item">
-      <view class="rank-num {{item.rank <= 3 ? 'top-' + item.rank : ''}}">{{item.rank}}</view>
-      <image class="avatar" src="{{item.avatar || '/images/default_avatar.png'}}"></image>
+      <view class="rank-num">{{item.rank}}</view>
+      <image class="avatar" src="{{item.avatar || '/images/default_avatar.png'}}" />
       <view class="rank-info">
         <text class="nick">{{item.name}}</text>
         <text class="score">{{item.score}} 分</text>
       </view>
     </view>
 
-    <!-- 空状态提示 -->
+    <!-- 空状态 -->
     <view wx:if="{{rankList.length === 0}}" class="empty">
-      <image src="/images/icon_empty.png"></image>
       <text>暂无数据</text>
     </view>
   </scroll-view>

@@ -4,7 +4,19 @@ App({
     avatarUrl: '',
     nickname: '',
     openid: '',
-    apiBaseUrl: config.DatabaseConfig.base_url
+    apiBaseUrl: config.DatabaseConfig.base_url,
+    allMusicList: [
+      { id: 1, name: "死别", author: "在虚无中永存/rnb脑袋", duration: "2:13" },
+      { id: 2, name: "肖邦：降E大调夜曲, Op. 9 No. 2", author: "土星皇家交响乐团", duration: "3:54" },
+      { id: 3, name: "肖斯塔科维奇：第二圆舞曲", author: "土星皇家交响乐团", duration: "3:44" },
+      { id: 4, name: "Cogwork Core", author: "Christopher Larkin", duration: "1:30" },
+      { id: 5, name: "讨厌红楼梦", author: "陶喆", duration: "4:02" },
+      { id: 6, name: "找自己", author: "陶喆", duration: "5:04" },
+      { id: 7, name: "才二十三", author: "方大同", duration: "3:44" },
+      { id: 8, name: "红豆", author: "方大同", duration: "3:56" },
+      { id: 9, name: "君の胸にLaLaLa", author: "MADOKA", duration: "3:38" },
+      { id: 10, name: "Downfall", author: "Brian Cheng", duration: "4:39" }
+    ],
   },
 
   onLaunch() {
