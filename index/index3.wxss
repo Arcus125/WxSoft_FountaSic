@@ -4,7 +4,7 @@
 }
 
 .user-section {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #92a0dd 0%, #596ecf 100%);
   border-radius: 20rpx;
   padding: 60rpx 40rpx;
   margin-bottom: 40rpx;
